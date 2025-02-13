@@ -1,0 +1,70 @@
+name: Build Upstream Besu
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'version.env'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Dotenv Action
+        id: dotenv
+        uses: falti/dotenv-action@v1.1.4
+        with:
+          path: version.env
+          keys-case: lower
+          log-variables: true
+
+      - name: Checkout Besu repository
+        uses: actions/checkout@v4
+        with:
+          repository: hyperledger/besu
+          ref: ${{ steps.dotenv.outputs.upstream_besu_ref }}
+          path: linea-besu
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: 21
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build Linea Besu
+        working-directory: ./linea-besu
+        run: ./gradlew -Prelease.releaseVersion=${{ steps.dotenv.outputs.linea_besu_version }} -Pversion=${{ steps.dotenv.outputs.linea_besu_version }} distTar
+
+      - name: Generate Checksum
+        working-directory: ./linea-besu/build/distributions
+        run: |
+          for file in *.tar.gz; do
+           shasum -a 256 "$file" > "$file.sha256"
+          done
+
+      # Create release tag and attach the distribution
+      - name: GH Linea Besu Release
+        permissions:
+          contents: write
+        id: release
+        uses: softprops/action-gh-release@v2.2.1
+        with:
+          files: |
+            ./linea-besu/build/distributions/besu-${{ steps.dotenv.outputs.linea_besu_version }}.tar.gz
+            ./linea-besu/build/distributions/*.sha256
+          tag_name: ${{ steps.dotenv.outputs.linea_besu_version }}
+          body: |
+            **Linea Besu Version**: `${{ steps.dotenv.outputs.linea_besu_version }}`
+            **Upstream Besu Version**: `${{ steps.dotenv.outputs.upstream_besu_ref }}`
+          draft: false
+          prerelease: false
+          preserve_order: true
+
+      # TODO: JFrog Artifactory Publish
